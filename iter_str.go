@@ -1,7 +1,9 @@
 package jsoniter
 
 import (
+	"bytes"
 	"fmt"
+	"sync"
 	"unicode/utf16"
 )
 
@@ -33,25 +35,28 @@ func (iter *Iterator) ReadString() (ret string) {
 }
 
 func (iter *Iterator) readStringSlowPath() (ret string) {
-	var str []byte
+	// var str []byte
+	str := getBp()
+	defer putBp(str)
 	var c byte
 	for iter.Error == nil {
 		c = iter.readByte()
 		if c == '"' {
-			return string(str)
+			return str.String()
 		}
 		if c == '\\' {
 			c = iter.readByte()
 			str = iter.readEscapedChar(c, str)
 		} else {
-			str = append(str, c)
+			str.WriteByte(c)
+			// str = append(str, c)
 		}
 	}
 	iter.ReportError("readStringSlowPath", "unexpected end of input")
 	return
 }
 
-func (iter *Iterator) readEscapedChar(c byte, str []byte) []byte {
+func (iter *Iterator) readEscapedChar(c byte, str *bytes.Buffer) *bytes.Buffer {
 	switch c {
 	case 'u':
 		r := iter.readU4()
@@ -88,21 +93,35 @@ func (iter *Iterator) readEscapedChar(c byte, str []byte) []byte {
 			str = appendRune(str, r)
 		}
 	case '"':
-		str = append(str, '"')
+		// str = append(str, '"')
+		str.WriteByte('"')
 	case '\\':
-		str = append(str, '\\')
+		// str = append(str, '\\')
+		str.WriteByte('\\')
 	case '/':
-		str = append(str, '/')
+		// str = append(str, '/')
+		str.WriteByte('/')
+
 	case 'b':
-		str = append(str, '\b')
+		// str = append(str, '\b')
+		str.WriteByte('\b')
+
 	case 'f':
-		str = append(str, '\f')
+		// str = append(str, '\f')
+		str.WriteByte('\f')
+
 	case 'n':
-		str = append(str, '\n')
+		// str = append(str, '\n')
+		str.WriteByte('\n')
+
 	case 'r':
-		str = append(str, '\r')
+		// str = append(str, '\r')
+		str.WriteByte('\r')
+
 	case 't':
-		str = append(str, '\t')
+		// str = append(str, '\t')
+		str.WriteByte('\t')
+
 	default:
 		iter.ReportError("readEscapedChar",
 			`invalid escape char after \`)
@@ -187,29 +206,55 @@ const (
 	runeError = '\uFFFD'     // the "error" Rune or "Unicode replacement character"
 )
 
-func appendRune(p []byte, r rune) []byte {
+func appendRune(p *bytes.Buffer, r rune) *bytes.Buffer {
 	// Negative values are erroneous. Making it unsigned addresses the problem.
 	switch i := uint32(r); {
 	case i <= rune1Max:
-		p = append(p, byte(r))
+		p.WriteByte(byte(r))
+		// p = append(p, byte(r))
 		return p
 	case i <= rune2Max:
-		p = append(p, t2|byte(r>>6))
-		p = append(p, tx|byte(r)&maskx)
+		// p = append(p, t2|byte(r>>6))
+		// p = append(p, tx|byte(r)&maskx)
+		p.WriteByte(t2 | byte(r>>6))
+		p.WriteByte(tx | byte(r)&maskx)
+
 		return p
 	case i > maxRune, surrogateMin <= i && i <= surrogateMax:
 		r = runeError
 		fallthrough
 	case i <= rune3Max:
-		p = append(p, t3|byte(r>>12))
-		p = append(p, tx|byte(r>>6)&maskx)
-		p = append(p, tx|byte(r)&maskx)
+		// p = append(p, t3|byte(r>>12))
+		// p = append(p, tx|byte(r>>6)&maskx)
+		// p = append(p, tx|byte(r)&maskx)
+		p.WriteByte(t3 | byte(r>>12))
+		p.WriteByte(tx | byte(r>>6)&maskx)
+		p.WriteByte(tx | byte(r)&maskx)
 		return p
 	default:
-		p = append(p, t4|byte(r>>18))
-		p = append(p, tx|byte(r>>12)&maskx)
-		p = append(p, tx|byte(r>>6)&maskx)
-		p = append(p, tx|byte(r)&maskx)
+		// p = append(p, t4|byte(r>>18))
+		// p = append(p, tx|byte(r>>12)&maskx)
+		// p = append(p, tx|byte(r>>6)&maskx)
+		// p = append(p, tx|byte(r)&maskx)
+		p.WriteByte(t4 | byte(r>>18))
+		p.WriteByte(tx | byte(r>>12)&maskx)
+		p.WriteByte(tx | byte(r>>6)&maskx)
+		p.WriteByte(tx | byte(r)&maskx)
 		return p
 	}
+}
+
+var bp = &sync.Pool{
+	New: func() interface{} {
+		return bytes.NewBufferString("")
+	},
+}
+
+func getBp() *bytes.Buffer {
+	return bp.Get().(*bytes.Buffer)
+}
+
+func putBp(b *bytes.Buffer) {
+	b.Reset()
+	bp.Put(b)
 }
